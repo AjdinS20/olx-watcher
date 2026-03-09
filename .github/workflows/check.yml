@@ -1,0 +1,71 @@
+name: OLX.ba Apartment Watcher
+
+on:
+  # Run every 5 minutes
+  schedule:
+    - cron: '*/5 * * * *'
+  # Allow manual trigger
+  workflow_dispatch:
+
+# Ensure only one instance runs at a time
+concurrency:
+  group: olx-watcher
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  check-listings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-v1
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
+
+      - name: Run OLX watcher
+        env:
+          # Telegram (optional — set these secrets if you want Telegram notifications)
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Email (optional — set these secrets if you want email notifications)
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT || '587' }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          # Search URL
+          OLX_SEARCH_URL: ${{ vars.OLX_SEARCH_URL || 'https://olx.ba/pretraga?category_id=23&attr_encoded=1&attr=3730313228497a6e616a6d6c6a6976616e6a6529&canton=4&cities=42' }}
+          SEEN_IDS_FILE: seen_ids.json
+        run: python scraper.py
+
+      - name: Commit updated seen IDs
+        run: |
+          git config user.name "OLX Watcher Bot"
+          git config user.email "bot@olx-watcher.local"
+          git add seen_ids.json
+          git diff --cached --quiet || git commit -m "Update seen listings [skip ci]"
+          git push || echo "Nothing to push"
